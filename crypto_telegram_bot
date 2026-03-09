@@ -1,0 +1,76 @@
+import json
+import requests
+import websocket
+import threading
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+BOT_TOKEN = "8692518241:AAF1snt2CSy5L5Q9KlMYVcTVixeebyo8F9E"
+
+price_history = {}
+
+def get_24h_change(symbol):
+    url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
+    data = requests.get(url).json()
+    return data["priceChangePercent"]
+
+def on_message(ws, message):
+    data = json.loads(message)
+
+    symbol = data['s']
+    price = float(data['c'])
+
+    if symbol not in price_history:
+        price_history[symbol] = []
+
+    price_history[symbol].append(price)
+
+    if len(price_history[symbol]) > 60:
+        price_history[symbol].pop(0)
+
+    if len(price_history[symbol]) >= 60:
+        old_price = price_history[symbol][0]
+        change_1m = ((price - old_price) / old_price) * 100
+    else:
+        change_1m = 0
+
+    change_24h = get_24h_change(symbol)
+
+    print(f"""
+Token: {symbol}
+
+Current Price: ${price}
+
+1 Minute Change: {round(change_1m,3)} %
+
+24h Change: {change_24h} %
+""")
+
+def start_socket(symbol):
+
+    socket = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@ticker"
+
+    ws = websocket.WebSocketApp(socket,on_message=on_message)
+
+    ws.run_forever()
+
+async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if len(context.args) == 0:
+        await update.message.reply_text("Use: /price btc")
+        return
+
+    token = context.args[0].upper()
+
+    symbol = token + "USDT"
+
+    await update.message.reply_text(f"Tracking {token} price...")
+
+    thread = threading.Thread(target=start_socket,args=(symbol,))
+    thread.start()
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("price", price))
+
+app.run_polling()
